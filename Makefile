@@ -33,14 +33,21 @@ CPU_CORE_OBJS = ds4_cpu.o ds4_distributed.o ds4_ssd.o
 CUDA_LDLIBS ?= -lm -Xcompiler -pthread -L$(CUDA_HOME)/targets/sbsa-linux/lib -L$(CUDA_HOME)/lib64 -lcudart -lcublas
 HIPCC ?= $(shell command -v hipcc 2>/dev/null || echo /opt/rocm/bin/hipcc)
 ROCM_ARCH ?= gfx1151
-ROCM_CFLAGS ?= -O3 -ffast-math -g -fno-finite-math-only -pthread -D__HIP_PLATFORM_AMD__ -Wno-unused-command-line-argument --offload-arch=$(ROCM_ARCH)
+ROCM_ARCHES = $(strip $(ROCM_ARCH))
+ROCM_PRIMARY_ARCH = $(firstword $(subst :, ,$(firstword $(ROCM_ARCHES))))
+ROCM_OFFLOAD_FLAGS = $(foreach arch,$(ROCM_ARCHES),--offload-arch=$(arch))
+ROCM_WMMA_W32 ?= $(if $(filter gfx11%,$(ROCM_PRIMARY_ARCH)),1,0)
+ROCM_MFMA_F16 ?= $(if $(filter gfx94% gfx95%,$(ROCM_PRIMARY_ARCH)),1,0)
+ROCM_CFLAGS ?= -O3 -ffast-math -g -fno-finite-math-only -pthread -D__HIP_PLATFORM_AMD__ -DDS4_ROCM_WMMA_W32=$(ROCM_WMMA_W32) -DDS4_ROCM_MFMA_F16=$(ROCM_MFMA_F16) -Wno-unused-command-line-argument $(ROCM_OFFLOAD_FLAGS)
 ROCM_LDLIBS ?= -lm -pthread -lhipblas -lhipblaslt
+ROCM_TARGETS := ds4 ds4-server ds4-bench ds4-eval ds4-agent
+ROCM_CORE_OBJS := ds4.o ds4_distributed.o ds4_ssd.o ds4_rocm.o
 DS4_LINK ?= $(NVCC) $(NVCCFLAGS)
 DS4_LINK_LIBS ?= $(CUDA_LDLIBS)
 METAL_LDLIBS := $(LDLIBS)
 endif
 
-.PHONY: all help clean test cpu cuda cuda-spark cuda-generic cuda-regression strix-halo rocm
+.PHONY: all help clean test cpu cuda cuda-spark cuda-generic cuda-regression strix-halo cdna cdna3 cdna4 mi300x mi325x mi350x mi355x rocm
 
 ifeq ($(UNAME_S),Darwin)
 all: ds4 ds4-server ds4-bench ds4-eval ds4-agent
@@ -85,7 +92,12 @@ help:
 	@echo "  make cuda-generic        Build CUDA for a generic local CUDA GPU"
 	@echo "  make cuda CUDA_ARCH=sm_N Build CUDA with an explicit nvcc -arch value"
 	@echo "  make strix-halo          Build ROCm for Strix Halo / gfx1151"
-	@echo "  make rocm                Alias for make strix-halo"
+	@echo "  make cdna                Build ROCm CDNA3+CDNA4 fat binary / gfx942+gfx950"
+	@echo "  make cdna3               Build ROCm for AMD Instinct MI300X/MI325X / gfx942"
+	@echo "  make cdna4               Build ROCm for AMD Instinct MI350X/MI355X / gfx950"
+	@echo "  make mi300x|mi325x       Alias for make cdna3"
+	@echo "  make mi350x|mi355x       Alias for make cdna4"
+	@echo "  make rocm ROCM_ARCH=gfxN Build ROCm with explicit AMD GPU target(s)"
 	@echo "  make cpu                 Build CPU-only ./ds4, ./ds4-server, ./ds4-bench, ./ds4-eval, and ./ds4-agent"
 	@echo "  make test                Build and run tests"
 	@echo "  make clean               Remove build outputs"
@@ -104,14 +116,42 @@ cuda:
 	fi
 	$(MAKE) -B ds4 ds4-server ds4-bench ds4-eval ds4-agent CUDA_ARCH="$(CUDA_ARCH)"
 
+strix-halo: ROCM_ARCH := gfx1151
 strix-halo:
-	$(MAKE) -B ds4 ds4-server ds4-bench ds4-eval ds4-agent \
-		CORE_OBJS="ds4.o ds4_distributed.o ds4_ssd.o ds4_rocm.o" \
+	$(MAKE) -B $(ROCM_TARGETS) \
+		HIPCC="$(HIPCC)" \
+		ROCM_ARCH="$(ROCM_ARCH)" \
+		ROCM_CFLAGS="$(ROCM_CFLAGS)" \
+		ROCM_LDLIBS="$(ROCM_LDLIBS)" \
+		CORE_OBJS="$(ROCM_CORE_OBJS)" \
 		CFLAGS="$(CFLAGS) -DDS4_ROCM_BUILD" \
 		DS4_LINK="$(HIPCC) $(ROCM_CFLAGS)" \
 		DS4_LINK_LIBS="$(ROCM_LDLIBS)"
 
-rocm: strix-halo
+cdna: ROCM_ARCH := gfx942 gfx950
+cdna3 mi300x mi325x: ROCM_ARCH := gfx942
+cdna4 mi350x mi355x: ROCM_ARCH := gfx950
+cdna cdna3 cdna4 mi300x mi325x mi350x mi355x:
+	$(MAKE) -B $(ROCM_TARGETS) \
+		HIPCC="$(HIPCC)" \
+		ROCM_ARCH="$(ROCM_ARCH)" \
+		ROCM_CFLAGS="$(ROCM_CFLAGS)" \
+		ROCM_LDLIBS="$(ROCM_LDLIBS)" \
+		CORE_OBJS="$(ROCM_CORE_OBJS)" \
+		CFLAGS="$(CFLAGS) -DDS4_ROCM_BUILD" \
+		DS4_LINK="$(HIPCC) $(ROCM_CFLAGS)" \
+		DS4_LINK_LIBS="$(ROCM_LDLIBS)"
+
+rocm:
+	$(MAKE) -B $(ROCM_TARGETS) \
+		HIPCC="$(HIPCC)" \
+		ROCM_ARCH="$(ROCM_ARCH)" \
+		ROCM_CFLAGS="$(ROCM_CFLAGS)" \
+		ROCM_LDLIBS="$(ROCM_LDLIBS)" \
+		CORE_OBJS="$(ROCM_CORE_OBJS)" \
+		CFLAGS="$(CFLAGS) -DDS4_ROCM_BUILD" \
+		DS4_LINK="$(HIPCC) $(ROCM_CFLAGS)" \
+		DS4_LINK_LIBS="$(ROCM_LDLIBS)"
 
 ds4: ds4_cli.o ds4_help.o linenoise.o $(CORE_OBJS)
 	$(DS4_LINK) -o $@ $^ $(DS4_LINK_LIBS)
