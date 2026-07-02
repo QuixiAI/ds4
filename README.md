@@ -14,7 +14,7 @@ and for quality and speed testing.
 We support the following backends:
 * **Metal** is our primary target. Starting from MacBooks with 96GB of RAM (or less, using SSD streaming).
 * **NVIDIA CUDA / DGX Spark**, CUDA with special care for the DGX Spark.
-* **AMD ROCm**, validated on AMD Instinct CDNA3 / MI300X. CDNA4 (`gfx950`) build targets are included but still need runtime validation on CDNA4 hardware. Strix Halo uses the `gfx1151` target.
+* **AMD ROCm / Strix Halo**, systems like the Framework Desktop and other systems based on the same GPU and unified RAM design, and CDNA3/MI300X.
 
 This project would not exist without **llama.cpp and GGML**, make sure to read
 the acknowledgements section, a big thank you to Georgi Gerganov and all the
